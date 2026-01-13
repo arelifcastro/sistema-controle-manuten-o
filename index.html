@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ChairControl - Gestão de Manutenção</title>
+    <title>ChairControl - Gestão de Manutenção e Projetos</title>
     
     <!-- 1. Tailwind CSS (Estilos) -->
     <script src="https://cdn.tailwindcss.com"></script>
@@ -62,7 +62,8 @@
             XCircle, Clock, Search, Trash2, Edit2, Package, X, AlertTriangle,
             Settings, Calendar, Save, Filter, Wallet, DollarSign, PieChart as PieIcon,
             CheckSquare, XSquare, Hourglass, Building2, Eye, BarChart as BarChartIcon,
-            Truck, Lock, User, LogIn, Bell, Check, Download, FileSpreadsheet, Eraser, RefreshCw
+            Truck, Lock, User, LogIn, Bell, Check, Download, FileSpreadsheet, Eraser, RefreshCw,
+            FolderKanban, Briefcase, ChevronRight
         } from 'lucide-react';
 
         import { 
@@ -245,13 +246,17 @@
             const [showRequestsModal, setShowRequestsModal] = useState(false);
             const [showClearAllModal, setShowClearAllModal] = useState(false);
 
-            const [activeTab, setActiveTab] = useState('dashboard');
+            const [activeTab, setActiveTab] = useState('projects');
             const [maintenances, setMaintenances] = useState([]);
+            const [projects, setProjects] = useState([]);
+            const [activeProjectId, setActiveProjectId] = useState('all');
+            
             const [loading, setLoading] = useState(true);
             const [editingItem, setEditingItem] = useState(null);
             const [deleteId, setDeleteId] = useState(null);
             const [viewingUnit, setViewingUnit] = useState(null);
             const [filters, setFilters] = useState({ search: '', unit: '', status: '' });
+            
             const [dashboardPeriod, setDashboardPeriod] = useState('all');
             const [listPeriod, setListPeriod] = useState('all');
             const [selectedFilterDate, setSelectedFilterDate] = useState(new Date());
@@ -276,6 +281,7 @@
 
             useEffect(() => {
                 if (!user) return;
+                
                 const qMaintenances = collection(db, 'artifacts', appId, 'public', 'data', 'maintenances');
                 const unsubscribeMaintenances = onSnapshot(qMaintenances, (snapshot) => {
                     const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
@@ -283,6 +289,14 @@
                     setMaintenances(data);
                     setLoading(false);
                 });
+
+                const qProjects = collection(db, 'artifacts', appId, 'public', 'data', 'projects');
+                const unsubscribeProjects = onSnapshot(qProjects, (snapshot) => {
+                    const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                    data.sort((a, b) => a.name.localeCompare(b.name));
+                    setProjects(data);
+                });
+
                 const docSettings = doc(db, 'artifacts', appId, 'public', 'data', 'settings', 'global');
                 const unsubscribeSettings = onSnapshot(docSettings, (docSnap) => {
                     if (docSnap.exists()) {
@@ -295,7 +309,12 @@
                         }));
                     }
                 });
-                return () => { unsubscribeMaintenances(); unsubscribeSettings(); };
+
+                return () => { 
+                    unsubscribeMaintenances(); 
+                    unsubscribeProjects();
+                    unsubscribeSettings(); 
+                };
             }, [user]);
 
             useEffect(() => {
@@ -324,7 +343,11 @@
 
             // Estatísticas
             const stats = useMemo(() => {
-                const data = maintenances.filter(m => isWithinPeriod(m.createdAt, dashboardPeriod, selectedFilterDate));
+                let data = maintenances.filter(m => isWithinPeriod(m.createdAt, dashboardPeriod, selectedFilterDate));
+                if (activeProjectId !== 'all') {
+                    data = data.filter(m => m.projectId === activeProjectId);
+                }
+
                 const totalValue = data.reduce((acc, curr) => acc + Number(curr.value || 0), 0);
                 const valueExecutado = data.filter(m => m.status === 'Executado').reduce((acc, curr) => acc + Number(curr.value || 0), 0);
                 const valuePendente = data.filter(m => m.status === 'Aguardando Aprovação').reduce((acc, curr) => acc + Number(curr.value || 0), 0);
@@ -333,11 +356,6 @@
                 const countExecutado = data.filter(m => m.status === 'Executado').length;
                 const countPendente = data.filter(m => m.status === 'Aguardando Aprovação').length;
                 const countIndeferido = data.filter(m => m.status === 'Indeferido').length;
-
-                const chartDataStatus = STATUS_OPTIONS.map(opt => ({
-                    name: opt.label,
-                    value: data.filter(m => m.status === opt.value).length
-                })).filter(i => i.value > 0);
 
                 const unitsMap = {};
                 data.forEach(item => {
@@ -348,11 +366,12 @@
                 });
                 const unitStats = Object.values(unitsMap).sort((a, b) => b.count - a.count);
 
-                return { count: data.length, countExecutado, countPendente, countIndeferido, totalValue, valueExecutado, valuePendente, valueIndeferido, chartDataStatus, unitStats };
-            }, [maintenances, dashboardPeriod, selectedFilterDate]);
+                return { count: data.length, countExecutado, countPendente, countIndeferido, totalValue, valueExecutado, valuePendente, valueIndeferido, unitStats };
+            }, [maintenances, dashboardPeriod, selectedFilterDate, activeProjectId]);
 
             const filteredListData = useMemo(() => {
                 return maintenances.filter(m => {
+                    const matchProject = activeProjectId === 'all' || m.projectId === activeProjectId;
                     const matchSearch = !filters.search || 
                         (m.department && m.department.toLowerCase().includes(filters.search.toLowerCase())) ||
                         (m.supplier && m.supplier.toLowerCase().includes(filters.search.toLowerCase())) ||
@@ -360,28 +379,78 @@
                     const matchUnit = !filters.unit || m.unit === filters.unit;
                     const matchStatus = !filters.status || m.status === filters.status;
                     const matchPeriod = isWithinPeriod(m.createdAt, listPeriod, selectedFilterDate);
-                    return matchSearch && matchUnit && matchStatus && matchPeriod;
+                    return matchProject && matchSearch && matchUnit && matchStatus && matchPeriod;
                 });
-            }, [maintenances, filters, listPeriod, selectedFilterDate]);
+            }, [maintenances, filters, listPeriod, selectedFilterDate, activeProjectId]);
 
             // Handlers
+            const handleRequestAccess = async (guestName) => {
+                const docRef = await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'access_requests'), {
+                    name: guestName, status: 'pending', createdAt: new Date().toISOString()
+                });
+                setAccessRequestId(docRef.id); setAccessRequestStatus('pending');
+            };
+
             const handleSaveMaintenance = async (data) => {
                 try {
+                    // 1. Definir os dados do registo (garantir projectId contextual)
+                    const pid = activeProjectId !== 'all' ? activeProjectId : 'none';
+                    const docData = { 
+                        ...data, 
+                        projectId: data.projectId || pid,
+                        value: Number(data.value) || 0 
+                    };
+
+                    // 2. Salvar Registo de Manutenção
                     if (editingItem) {
                         const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'maintenances', editingItem.id);
-                        await updateDoc(docRef, { ...data, updatedAt: new Date().toISOString() });
+                        await updateDoc(docRef, { ...docData, updatedAt: new Date().toISOString() });
                         setEditingItem(null);
                     } else {
-                        await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'maintenances'), { ...data, createdAt: new Date().toISOString() });
+                        await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'maintenances'), { 
+                            ...docData, 
+                            createdAt: new Date().toISOString() 
+                        });
                     }
-                    // Auto-update lists
-                    const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'settings', 'global');
+
+                    // 3. Atualizar configurações (Metadados como Depto/Fornecedor)
+                    const docSettings = doc(db, 'artifacts', appId, 'public', 'data', 'settings', 'global');
                     const updates = {};
-                    if (data.department && !settings.departments.includes(data.department)) updates.departments = arrayUnion(data.department);
-                    if (data.supplier && !settings.suppliers.includes(data.supplier)) updates.suppliers = arrayUnion(data.supplier);
-                    if (Object.keys(updates).length > 0) await updateDoc(docRef, updates);
+                    
+                    if (data.department && !settings.departments.includes(data.department)) {
+                        updates.departments = arrayUnion(data.department);
+                    }
+                    if (data.supplier && !settings.suppliers.includes(data.supplier)) {
+                        updates.suppliers = arrayUnion(data.supplier);
+                    }
+
+                    if (Object.keys(updates).length > 0) {
+                        // Tentar atualizar, se falhar (documento não existe), criar novo
+                        await updateDoc(docSettings, updates).catch(() => {
+                            return setDoc(docSettings, {
+                                appName: settings.appName,
+                                primaryColor: settings.primaryColor,
+                                units: settings.units,
+                                ...updates
+                            }, { merge: true });
+                        });
+                    }
+
                     setActiveTab('list');
-                } catch (err) { alert("Erro ao salvar!"); }
+                } catch (err) { 
+                    console.error(err);
+                    alert("Erro ao processar o registo. Por favor, tente novamente."); 
+                }
+            };
+
+            const handleSaveProject = async (projName) => {
+                if (!projName.trim()) return;
+                try {
+                    await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'projects'), { 
+                        name: projName, 
+                        createdAt: new Date().toISOString() 
+                    });
+                } catch (e) { alert("Erro ao criar projeto."); }
             };
 
             const handleDeleteAll = async () => {
@@ -406,17 +475,11 @@
                 alert("Configurações atualizadas!");
             };
 
-            const handleRequestAccess = async (guestName) => {
-                const docRef = await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'access_requests'), {
-                    name: guestName, status: 'pending', createdAt: new Date().toISOString()
-                });
-                setAccessRequestId(docRef.id); setAccessRequestStatus('pending');
-            };
-
             const handleApproveRequest = async (id) => await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'access_requests', id), { status: 'approved' });
             const handleRejectRequest = async (id) => await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'access_requests', id), { status: 'rejected' });
 
             const primaryColorStyle = { backgroundColor: settings.primaryColor };
+            const projectsColor = "#f59e0b"; // Ambar
 
             const TimeFilterButtons = ({ value, onChange, currentSelectedDate, onDateChange }) => (
                 React.createElement('div', { className: "flex flex-col sm:flex-row items-end sm:items-center gap-2" },
@@ -429,18 +492,6 @@
                                 className: `px-3 py-1.5 text-xs font-bold rounded-lg transition-all ${isActive ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`,
                             }, labels[p]);
                         })
-                    ),
-                    value === 'month' && React.createElement('div', { className: "flex bg-white border border-slate-200 rounded-xl overflow-hidden animate-in fade-in" },
-                        React.createElement('select', { 
-                            className: "px-3 py-1.5 text-xs font-bold text-slate-700 outline-none bg-transparent cursor-pointer",
-                            value: currentSelectedDate.getMonth(),
-                            onChange: (e) => { const newDate = new Date(currentSelectedDate); newDate.setMonth(parseInt(e.target.value)); onDateChange(newDate); }
-                        }, MONTHS.map((m, i) => React.createElement('option', { key: i, value: i }, m))),
-                        React.createElement('select', {
-                            className: "px-3 py-1.5 text-xs font-bold text-slate-500 outline-none bg-slate-50 border-l cursor-pointer",
-                            value: currentSelectedDate.getFullYear(),
-                            onChange: (e) => { const newDate = new Date(currentSelectedDate); newDate.setFullYear(parseInt(e.target.value)); onDateChange(newDate); }
-                        }, [2024, 2025, 2026].map(y => React.createElement('option', { key: y, value: y }, y)))
                     )
                 )
             );
@@ -450,14 +501,13 @@
             return React.createElement('div', { className: "min-h-screen bg-slate-50 flex flex-col md:flex-row text-slate-800 font-sans" },
                 React.createElement(ConfirmationModal, { isOpen: !!deleteId, onClose: () => setDeleteId(null), onConfirm: async () => { await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'maintenances', deleteId)); setDeleteId(null); } }),
                 
-                // Modal de Confirmação para Limpar Tudo
                 showClearAllModal && React.createElement('div', { className: "fixed inset-0 z-[60] flex items-center justify-center p-4 bg-slate-900/80 backdrop-blur-sm" },
                     React.createElement('div', { className: "bg-white rounded-3xl p-8 max-w-sm w-full text-center shadow-2xl animate-in zoom-in-95 duration-200" },
                         React.createElement('div', { className: "w-16 h-16 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-4" }, React.createElement(AlertTriangle, { className: "text-red-600", size: 32 })),
                         React.createElement('h3', { className: "text-xl font-bold mb-2" }, "Limpar Tudo?"),
-                        React.createElement('p', { className: "text-slate-500 text-sm mb-6" }, "Você está prestes a apagar TODOS os pedidos do sistema. Esta ação não pode ser desfeita."),
+                        React.createElement('p', { className: "text-slate-500 text-sm mb-6" }, "Deseja apagar todos os registos do sistema?"),
                         React.createElement('div', { className: "flex gap-3" }, 
-                            React.createElement('button', { onClick: () => setShowClearAllModal(false), className: "flex-1 p-3 bg-slate-100 rounded-xl font-bold" }, "Cancelar"), 
+                            React.createElement('button', { onClick: () => setShowClearAllModal(false), className: "flex-1 p-3 bg-slate-100 rounded-xl font-bold" }, "Não"), 
                             React.createElement('button', { onClick: handleDeleteAll, className: "flex-1 p-3 bg-red-600 text-white rounded-xl font-bold" }, "Sim, Limpar")
                         )
                     )
@@ -484,12 +534,51 @@
                         React.createElement('div', { className: "flex items-center space-x-3" }, React.createElement('div', { style: primaryColorStyle, className: "p-2 rounded-lg" }, React.createElement(LayoutDashboard, { size: 20 })), React.createElement('span', { className: "font-bold text-lg leading-tight" }, settings.appName)),
                         currentUserRole === 'owner' && React.createElement('div', { className: "relative cursor-pointer", onClick: () => setShowRequestsModal(true) }, React.createElement(Bell, { size: 20, className: "text-slate-400 hover:text-white" }), pendingRequests.length > 0 && React.createElement('div', { className: "absolute -top-1 -right-1 w-3 h-3 bg-red-500 rounded-full pulse-ring" }))
                     ),
-                    [
-                        { id: 'dashboard', icon: TrendingUp, label: 'Painel' },
-                        { id: 'form', icon: PlusCircle, label: 'Novo Registro' },
-                        { id: 'list', icon: List, label: 'Listagem' },
-                        { id: 'admin', icon: Settings, label: 'Administrativo' }
-                    ].map(item => React.createElement('button', { key: item.id, onClick: () => { setActiveTab(item.id); setEditingItem(null); }, className: `w-full flex items-center p-3 rounded-xl transition-all ${activeTab === item.id ? 'shadow-lg text-white font-bold' : 'hover:bg-slate-800 text-slate-400'}`, style: activeTab === item.id ? primaryColorStyle : {} }, React.createElement(item.icon, { className: "mr-3", size: 18 }), item.label)),
+                    
+                    React.createElement('div', { className: "space-y-2 flex-1" },
+                        // Aba de Projetos (Destaque Ambar)
+                        React.createElement('div', { className: "space-y-1" },
+                            React.createElement('button', { 
+                                onClick: () => { setActiveTab('projects'); setEditingItem(null); },
+                                className: `w-full flex items-center p-3 rounded-xl transition-all ${activeTab === 'projects' ? 'shadow-lg text-white font-bold' : 'hover:bg-slate-800 text-slate-400'}`,
+                                style: activeTab === 'projects' ? { backgroundColor: projectsColor } : {}
+                            }, React.createElement(FolderKanban, { className: "mr-3", size: 18 }), "Projetos"),
+                            
+                            // Nome do Projeto Ativo embaixo da aba Projetos (Design Ajustado)
+                            activeProjectId !== 'all' && React.createElement('div', { className: "px-3 py-2 mx-2 mt-1 bg-amber-900/20 rounded-lg border-l-4 border-amber-500 animate-in slide-in-from-top-1" },
+                                React.createElement('p', { className: "text-[9px] uppercase font-black text-amber-500 tracking-wider" }, "Contexto Ativo:"),
+                                React.createElement('div', { className: "flex items-center justify-between mt-0.5" },
+                                    React.createElement('span', { className: "text-xs font-bold text-white truncate max-w-[130px]" }, projects.find(p => p.id === activeProjectId)?.name),
+                                    React.createElement('button', { onClick: (e) => { e.stopPropagation(); setActiveProjectId('all'); }, className: "text-amber-500/50 hover:text-white ml-1" }, React.createElement(X, { size: 12 }))
+                                )
+                            )
+                        ),
+
+                        React.createElement('button', { 
+                            onClick: () => { setActiveTab('dashboard'); setEditingItem(null); },
+                            className: `w-full flex items-center p-3 rounded-xl transition-all ${activeTab === 'dashboard' ? 'shadow-lg text-white font-bold' : 'hover:bg-slate-800 text-slate-400'}`,
+                            style: activeTab === 'dashboard' ? primaryColorStyle : {}
+                        }, React.createElement(TrendingUp, { className: "mr-3", size: 18 }), "Painel"),
+
+                        React.createElement('button', { 
+                            onClick: () => { setActiveTab('form'); setEditingItem(null); },
+                            className: `w-full flex items-center p-3 rounded-xl transition-all ${activeTab === 'form' ? 'shadow-lg text-white font-bold' : 'hover:bg-slate-800 text-slate-400'}`,
+                            style: activeTab === 'form' ? primaryColorStyle : {}
+                        }, React.createElement(PlusCircle, { className: "mr-3", size: 18 }), "Novo Registro"),
+
+                        React.createElement('button', { 
+                            onClick: () => { setActiveTab('list'); setEditingItem(null); },
+                            className: `w-full flex items-center p-3 rounded-xl transition-all ${activeTab === 'list' ? 'shadow-lg text-white font-bold' : 'hover:bg-slate-800 text-slate-400'}`,
+                            style: activeTab === 'list' ? primaryColorStyle : {}
+                        }, React.createElement(List, { className: "mr-3", size: 18 }), "Listagem"),
+
+                        React.createElement('button', { 
+                            onClick: () => { setActiveTab('admin'); setEditingItem(null); },
+                            className: `w-full flex items-center p-3 rounded-xl transition-all ${activeTab === 'admin' ? 'shadow-lg text-white font-bold' : 'hover:bg-slate-800 text-slate-400'}`,
+                            style: activeTab === 'admin' ? primaryColorStyle : {}
+                        }, React.createElement(Settings, { className: "mr-3", size: 18 }), "Administrativo")
+                    ),
+
                     React.createElement('div', { className: "mt-auto pt-6 border-t border-slate-800 text-slate-500 text-xs font-bold" }, React.createElement(User, { size: 14, className: "mr-2 inline" }), currentUserRole === 'owner' ? 'Jordan (Dono)' : 'Visitante')
                 ),
 
@@ -499,11 +588,13 @@
                         
                         activeTab === 'dashboard' && React.createElement('div', { className: "space-y-8 animate-in fade-in" },
                             React.createElement('div', { className: "flex flex-col md:flex-row justify-between items-start md:items-center gap-4" },
-                                React.createElement('h2', { className: "text-2xl font-bold text-slate-900" }, "Painel de Resumo"),
+                                React.createElement('div', null,
+                                    React.createElement('h2', { className: "text-2xl font-bold text-slate-900" }, activeProjectId === 'all' ? "Painel Geral" : `Painel: ${projects.find(p => p.id === activeProjectId)?.name}`),
+                                    activeProjectId !== 'all' && React.createElement('p', { className: "text-sm text-slate-500" }, "Visualizando dados específicos deste projeto")
+                                ),
                                 React.createElement(TimeFilterButtons, { value: dashboardPeriod, onChange: setDashboardPeriod, currentSelectedDate: selectedFilterDate, onDateChange: setSelectedFilterDate })
                             ),
 
-                            // Visão Financeira
                             React.createElement('div', { className: "grid grid-cols-1 md:grid-cols-3 gap-6" },
                                 React.createElement('div', { className: "bg-white p-6 rounded-3xl border shadow-sm border-l-4 border-slate-900" }, React.createElement('p', { className: "text-slate-400 text-xs font-bold uppercase" }, "Valor Total"), React.createElement('p', { className: "text-3xl font-black mt-2 text-slate-800" }, `R$ ${stats.totalValue.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`)),
                                 React.createElement('div', { className: "bg-white p-6 rounded-3xl border shadow-sm border-l-4 border-green-500" }, React.createElement('p', { className: "text-green-600/70 text-xs font-bold uppercase" }, "Valor Aprovado"), React.createElement('p', { className: "text-3xl font-black mt-2 text-green-600" }, `R$ ${stats.valueExecutado.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`)),
@@ -518,14 +609,14 @@
                             ),
 
                             React.createElement('div', { className: "bg-white p-8 rounded-3xl border shadow-sm flex flex-col md:flex-row items-center gap-6" },
-                                React.createElement('div', { className: "flex-1" }, React.createElement('h3', { className: "font-bold text-lg flex items-center gap-2" }, React.createElement(FileSpreadsheet, { className: "text-green-600" }), "Exportar Relatório"), React.createElement('p', { className: "text-slate-400 text-sm" }, "Gere um ficheiro Excel/CSV organizado com os dados selecionados.")),
+                                React.createElement('div', { className: "flex-1" }, React.createElement('h3', { className: "font-bold text-lg flex items-center gap-2" }, React.createElement(FileSpreadsheet, { className: "text-green-600" }), "Exportar Relatório"), React.createElement('p', { className: "text-slate-400 text-sm" }, "Gere um arquivo CSV organizado com os dados filtrados.")),
                                 React.createElement('div', { className: "flex flex-col sm:flex-row gap-3 items-center" },
                                     React.createElement(TimeFilterButtons, { value: exportPeriod, onChange: setExportPeriod, currentSelectedDate: exportDate, onDateChange: setExportDate }),
                                     React.createElement('button', { onClick: () => {
                                         const data = maintenances.filter(m => isWithinPeriod(m.createdAt, exportPeriod, exportDate));
                                         if(data.length > 0) exportToCSV(data, "Relatorio_ChairControl");
                                         else alert("Sem dados para exportar.");
-                                    }, className: "bg-slate-900 text-white px-6 py-3 rounded-xl font-bold flex items-center gap-2" }, React.createElement(Download, { size: 18 }), "Exportar CSV")
+                                    }, className: "bg-slate-900 text-white px-6 py-3 rounded-xl font-bold flex items-center gap-2" }, React.createElement(Download, { size: 18 }), "Exportar")
                                 )
                             ),
 
@@ -539,7 +630,23 @@
                             )
                         ),
 
-                        activeTab === 'form' && React.createElement(MaintenanceForm, { onSubmit: handleSaveMaintenance, initialData: editingItem, onCancel: () => setActiveTab('list'), units: settings.units, existingDepartments: settings.departments, existingSuppliers: settings.suppliers, primaryColor: settings.primaryColor }),
+                        activeTab === 'projects' && React.createElement(ProjectsView, { 
+                            projects: projects, 
+                            onSelect: (id) => { setActiveProjectId(id); setActiveTab('dashboard'); },
+                            onCreate: handleSaveProject,
+                            onDelete: async (id) => await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'projects', id)),
+                            primaryColor: projectsColor
+                        }),
+
+                        activeTab === 'form' && React.createElement(MaintenanceForm, { 
+                            onSubmit: handleSaveMaintenance, 
+                            initialData: editingItem, 
+                            onCancel: () => setActiveTab('list'), 
+                            units: settings.units, 
+                            existingDepartments: settings.departments, 
+                            existingSuppliers: settings.suppliers, 
+                            primaryColor: settings.primaryColor 
+                        }),
 
                         activeTab === 'list' && React.createElement('div', { className: "space-y-6 animate-in fade-in" },
                             React.createElement('div', { className: "flex flex-col gap-4" },
@@ -551,7 +658,7 @@
                                     )
                                 ),
                                 React.createElement('div', { className: "flex flex-col md:flex-row gap-4" },
-                                    React.createElement('div', { className: "relative flex-1" }, React.createElement(Search, { className: "absolute left-3 top-1/2 -translate-y-1/2 text-slate-400", size: 18 }), React.createElement('input', { placeholder: "Procurar pedido, unidade...", className: "w-full pl-10 pr-4 py-3 border rounded-xl outline-none focus:ring-2", style: { '--tw-ring-color': settings.primaryColor }, onChange: e => setFilters({ ...filters, search: e.target.value }) })),
+                                    React.createElement('div', { className: "relative flex-1" }, React.createElement(Search, { className: "absolute left-3 top-1/2 -translate-y-1/2 text-slate-400", size: 18 }), React.createElement('input', { placeholder: "Procurar...", className: "w-full pl-10 pr-4 py-3 border rounded-xl outline-none focus:ring-2", style: { '--tw-ring-color': settings.primaryColor }, onChange: e => setFilters({ ...filters, search: e.target.value }) })),
                                     React.createElement('select', { className: "p-3 border rounded-xl bg-white min-w-[150px]", value: filters.unit, onChange: e => setFilters({ ...filters, unit: e.target.value }) }, React.createElement('option', { value: "" }, "Unidades"), settings.units.map(u => React.createElement('option', { key: u, value: u }, u))),
                                     React.createElement('select', { className: "p-3 border rounded-xl bg-white min-w-[150px]", value: filters.status, onChange: e => setFilters({ ...filters, status: e.target.value }) }, 
                                         React.createElement('option', { value: "" }, "Status"), 
@@ -585,7 +692,68 @@
             );
         }
 
-        // --- FORMULÁRIO ---
+        // --- ABA DE PROJETOS ---
+        function ProjectsView({ projects, onSelect, onCreate, onDelete, primaryColor }) {
+            const [newProjName, setNewProjName] = useState('');
+            const [showCreate, setShowCreate] = useState(false);
+
+            return React.createElement('div', { className: "space-y-8 animate-in fade-in" },
+                React.createElement('div', { className: "flex justify-between items-center" },
+                    React.createElement('div', null,
+                        React.createElement('h2', { className: "text-2xl font-bold text-slate-900" }, "Gestão de Projetos"),
+                        React.createElement('p', { className: "text-slate-500 text-sm" }, "Selecione um projeto para visualizar os seus dados específicos.")
+                    ),
+                    React.createElement('button', { 
+                        onClick: () => setShowCreate(!showCreate),
+                        className: "bg-slate-900 text-white px-5 py-2.5 rounded-xl font-bold text-sm flex items-center gap-2"
+                    }, React.createElement(PlusCircle, { size: 18 }), "Criar Projeto")
+                ),
+
+                showCreate && React.createElement('form', { 
+                    onSubmit: (e) => { e.preventDefault(); onCreate(newProjName); setNewProjName(''); setShowCreate(false); },
+                    className: "bg-white p-6 rounded-3xl border shadow-sm flex gap-3 animate-in slide-in-from-top-4"
+                },
+                    React.createElement('input', { 
+                        className: "flex-1 p-4 border rounded-2xl outline-none focus:ring-2", 
+                        style: { '--tw-ring-color': primaryColor },
+                        value: newProjName, 
+                        onChange: e => setNewProjName(e.target.value), 
+                        placeholder: "Nome do projeto..." 
+                    }),
+                    React.createElement('button', { type: "submit", className: "px-8 bg-slate-900 text-white font-bold rounded-2xl" }, "Adicionar")
+                ),
+
+                React.createElement('div', { className: "grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6" },
+                    React.createElement('button', { 
+                        onClick: () => onSelect('all'),
+                        className: "bg-white p-8 rounded-3xl border border-dashed border-slate-300 hover:border-slate-900 transition-all text-left flex flex-col justify-between group"
+                    },
+                        React.createElement(Briefcase, { className: "text-slate-300 group-hover:text-slate-900 transition-colors mb-4", size: 32 }),
+                        React.createElement('div', null,
+                            React.createElement('h3', { className: "font-bold text-xl" }, "Visão Geral"),
+                            React.createElement('p', { className: "text-slate-400 text-sm" }, "Ver todas as manutenções sem filtros de projeto.")
+                        )
+                    ),
+                    projects.map(proj => React.createElement('div', { key: proj.id, className: "bg-white p-8 rounded-3xl border hover:shadow-xl transition-all flex flex-col justify-between group relative" },
+                        React.createElement('button', { 
+                            onClick: (e) => { e.stopPropagation(); onDelete(proj.id); },
+                            className: "absolute top-4 right-4 p-2 text-slate-200 hover:text-red-600 transition-colors"
+                        }, React.createElement(Trash2, { size: 16 })),
+                        React.createElement(FolderKanban, { className: "text-slate-900 mb-4", size: 32 }),
+                        React.createElement('div', null,
+                            React.createElement('h3', { className: "font-bold text-xl" }, proj.name),
+                            React.createElement('button', { 
+                                onClick: () => onSelect(proj.id),
+                                className: "mt-4 flex items-center gap-2 text-sm font-black uppercase tracking-wider group-hover:translate-x-1 transition-transform",
+                                style: { color: primaryColor }
+                            }, "Aceder Projeto", React.createElement(ChevronRight, { size: 14 }))
+                        )
+                    ))
+                )
+            );
+        }
+
+        // --- FORMULÁRIO (Opções de Status Reintroduzidas) ---
         function MaintenanceForm({ onSubmit, initialData, onCancel, units, existingDepartments, existingSuppliers, primaryColor }) {
             const initialFormState = { unit: '', department: '', supplier: '', orderNumber: '', value: '', status: 'Aguardando Aprovação' };
             const [formData, setFormData] = useState(initialFormState);
@@ -600,58 +768,43 @@
 
             const primaryColorStyle = { backgroundColor: primaryColor };
 
-            return React.createElement('div', { className: "max-w-2xl mx-auto bg-white p-10 rounded-3xl border shadow-2xl animate-in slide-in-from-bottom-4 relative" },
-                
-                // Mini Modal de Confirmação Interno para Limpar Campos
+            return React.createElement('div', { className: "max-w-2xl mx-auto bg-white p-10 rounded-3xl border shadow-2xl relative" },
                 showConfirmClear && React.createElement('div', { className: "absolute inset-0 z-20 bg-white/95 rounded-3xl flex items-center justify-center p-8 text-center" },
                     React.createElement('div', { className: "space-y-4" },
                         React.createElement('div', { className: "w-12 h-12 bg-amber-100 text-amber-600 rounded-full flex items-center justify-center mx-auto" }, React.createElement(RefreshCw, { size: 24 })),
-                        React.createElement('h3', { className: "font-bold text-lg" }, "Limpar todos os campos?"),
-                        React.createElement('p', { className: "text-slate-500 text-sm" }, "Isto apagará o que escreveu neste formulário."),
+                        React.createElement('h3', { className: "font-bold text-lg" }, "Limpar campos?"),
                         React.createElement('div', { className: "flex gap-2" },
                             React.createElement('button', { onClick: () => setShowConfirmClear(false), className: "flex-1 px-4 py-2 bg-slate-100 rounded-xl font-bold" }, "Não"),
-                            React.createElement('button', { onClick: handleClearForm, className: "flex-1 px-4 py-2 bg-amber-600 text-white rounded-xl font-bold" }, "Sim, Limpar")
+                            React.createElement('button', { onClick: handleClearForm, className: "flex-1 px-4 py-2 bg-amber-600 text-white rounded-xl font-bold" }, "Sim")
                         )
                     )
                 ),
-
-                React.createElement('div', { className: "flex justify-between mb-8" }, 
-                    React.createElement('div', null,
-                        React.createElement('h2', { className: "text-2xl font-black" }, initialData ? 'Editar Registro' : 'Novo Registro'),
-                        React.createElement('p', { className: "text-xs text-slate-400 mt-1" }, "Preencha os dados do pedido de manutenção")
-                    ),
-                    React.createElement('button', { onClick: onCancel, className: "text-slate-400 hover:bg-slate-100 p-2 rounded-full" }, React.createElement(X))
-                ),
-                React.createElement('form', { onSubmit: (e) => { e.preventDefault(); if (!formData.unit || !formData.orderNumber) return alert("Preencha unidade e número do pedido."); onSubmit(formData); }, className: "space-y-6" },
-                    React.createElement('div', { className: "space-y-2" }, 
-                        React.createElement('label', { className: "text-sm font-bold" }, "Unidade"), 
-                        React.createElement('select', { className: "w-full p-4 border rounded-2xl bg-slate-50 focus:ring-2", style: { '--tw-ring-color': primaryColor }, value: formData.unit, onChange: e => setFormData({ ...formData, unit: e.target.value }) }, 
-                            React.createElement('option', { value: "" }, "Selecionar unidade..."), 
-                            units.map(u => React.createElement('option', { key: u, value: u }, u))
-                        )
-                    ),
-                    React.createElement('div', { className: "space-y-2" }, 
-                        React.createElement('label', { className: "text-sm font-bold" }, "Departamento"), 
-                        React.createElement('input', { list: "dept-list", className: "w-full p-4 border rounded-2xl bg-slate-50", value: formData.department, onChange: e => setFormData({ ...formData, department: e.target.value }), placeholder: "Digite ou selecione..." }),
-                        React.createElement('datalist', { id: "dept-list" }, existingDepartments.map(d => React.createElement('option', { key: d, value: d })))
-                    ),
-                    React.createElement('div', { className: "space-y-2" }, 
-                        React.createElement('label', { className: "text-sm font-bold" }, "Fornecedor"), 
-                        React.createElement('input', { list: "supp-list", className: "w-full p-4 border rounded-2xl bg-slate-50", value: formData.supplier, onChange: e => setFormData({ ...formData, supplier: e.target.value }), placeholder: "Informe o fornecedor..." }),
-                        React.createElement('datalist', { id: "supp-list" }, existingSuppliers.map(s => React.createElement('option', { key: s, value: s })))
-                    ),
+                React.createElement('div', { className: "flex justify-between mb-8" }, React.createElement('h2', { className: "text-2xl font-black text-slate-900" }, initialData ? 'Editar Registo' : 'Novo Registo'), React.createElement('button', { onClick: onCancel, className: "text-slate-400 hover:bg-slate-100 p-2 rounded-full" }, React.createElement(X))),
+                React.createElement('form', { 
+                    onSubmit: (e) => { 
+                        e.preventDefault(); 
+                        if(!formData.unit) return alert("Por favor, selecione uma unidade.");
+                        onSubmit(formData); 
+                    }, 
+                    className: "space-y-6" 
+                },
+                    React.createElement('div', { className: "space-y-2" }, React.createElement('label', { className: "text-sm font-bold" }, "Unidade"), React.createElement('select', { required: true, className: "w-full p-4 border rounded-2xl bg-slate-50 focus:ring-2", style: { '--tw-ring-color': primaryColor }, value: formData.unit, onChange: e => setFormData({ ...formData, unit: e.target.value }) }, React.createElement('option', { value: "" }, "Selecionar..."), units.map(u => React.createElement('option', { key: u, value: u }, u)))),
+                    React.createElement('div', { className: "space-y-2" }, React.createElement('label', { className: "text-sm font-bold" }, "Departamento"), React.createElement('input', { list: "dept-list", className: "w-full p-4 border rounded-2xl bg-slate-50", value: formData.department, onChange: e => setFormData({ ...formData, department: e.target.value }) }), React.createElement('datalist', { id: "dept-list" }, existingDepartments.map(d => React.createElement('option', { key: d, value: d })))),
+                    React.createElement('div', { className: "space-y-2" }, React.createElement('label', { className: "text-sm font-bold" }, "Fornecedor"), React.createElement('input', { list: "supp-list", className: "w-full p-4 border rounded-2xl bg-slate-50", value: formData.supplier, onChange: e => setFormData({ ...formData, supplier: e.target.value }) }), React.createElement('datalist', { id: "supp-list" }, existingSuppliers.map(s => React.createElement('option', { key: s, value: s })))),
                     React.createElement('div', { className: "grid grid-cols-2 gap-6" },
-                        React.createElement('div', { className: "space-y-2" }, React.createElement('label', { className: "text-sm font-bold" }, "Nº Pedido (6 dígitos)"), React.createElement('input', { maxLength: 6, className: "w-full p-4 border rounded-2xl font-mono", value: formData.orderNumber, onChange: e => setFormData({ ...formData, orderNumber: e.target.value.replace(/\D/g, '') }), placeholder: "000000" })),
-                        React.createElement('div', { className: "space-y-2" }, React.createElement('label', { className: "text-sm font-bold" }, "Valor (R$)"), React.createElement('input', { type: "number", step: "0.01", className: "w-full p-4 border rounded-2xl", value: formData.value, onChange: e => setFormData({ ...formData, value: e.target.value }), placeholder: "0,00" }))
+                        React.createElement('div', { className: "space-y-2" }, React.createElement('label', { className: "text-sm font-bold" }, "Nº Pedido (6 dígitos)"), React.createElement('input', { required: true, maxLength: 6, className: "w-full p-4 border rounded-2xl font-mono", value: formData.orderNumber, onChange: e => setFormData({ ...formData, orderNumber: e.target.value.replace(/\D/g, '') }) })),
+                        React.createElement('div', { className: "space-y-2" }, React.createElement('label', { className: "text-sm font-bold" }, "Valor (R$)"), React.createElement('input', { required: true, type: "number", step: "0.01", className: "w-full p-4 border rounded-2xl", value: formData.value, onChange: e => setFormData({ ...formData, value: e.target.value }) }))
                     ),
+                    
+                    // STATUS RESTAURADO
                     React.createElement('div', { className: "space-y-3" }, 
                         React.createElement('label', { className: "text-sm font-bold" }, "Status"), 
-                        React.createElement('div', { className: "flex flex-wrap gap-2" }, STATUS_OPTIONS.map(s => React.createElement('button', { key: s.value, type: "button", onClick: () => setFormData({ ...formData, status: s.value }), className: `flex-1 py-3 rounded-xl border text-[10px] font-black uppercase transition-all ${formData.status === s.value ? s.color + ' ring-2' : 'bg-white text-slate-400'}` }, s.label)))
+                        React.createElement('div', { className: "flex flex-wrap gap-2" }, STATUS_OPTIONS.map(s => React.createElement('button', { key: s.value, type: "button", onClick: () => setFormData({ ...formData, status: s.value }), className: `flex-1 py-3 rounded-xl border text-[10px] font-black uppercase transition-all ${formData.status === s.value ? s.color + ' ring-4 ring-offset-2 ring-slate-200 border-blue-500' : 'bg-white text-slate-400 border-slate-100 hover:border-slate-300'}` }, s.label)))
                     ),
+
                     React.createElement('div', { className: "flex flex-col sm:flex-row gap-4 pt-6 border-t mt-6" },
-                        React.createElement('button', { type: "submit", className: "flex-1 text-white py-4 rounded-2xl font-bold shadow-lg", style: primaryColorStyle }, "Salvar Registro"),
-                        !initialData && React.createElement('button', { type: "button", onClick: () => setShowConfirmClear(true), className: "px-6 py-4 bg-slate-100 text-slate-500 rounded-2xl font-bold flex items-center justify-center gap-2 hover:bg-slate-200" }, React.createElement(Eraser, { size: 18 }), "Limpar"),
-                        React.createElement('button', { type: "button", onClick: onCancel, className: "px-8 py-4 bg-slate-50 text-slate-400 rounded-2xl font-bold hover:bg-slate-100" }, "Cancelar")
+                        React.createElement('button', { type: "submit", className: "flex-1 text-white py-4 rounded-2xl font-bold shadow-lg transition-transform active:scale-95", style: primaryColorStyle }, "Novo Registro"),
+                        !initialData && React.createElement('button', { type: "button", onClick: () => setShowConfirmClear(true), className: "px-6 py-4 bg-slate-100 text-slate-500 rounded-2xl font-bold flex items-center justify-center gap-2 hover:bg-slate-200" }, React.createElement(Eraser, { size: 18 }), "Limpar")
                     )
                 )
             );
@@ -687,10 +840,10 @@
                     ),
                     React.createElement('div', { className: "p-8 space-y-8 overflow-y-auto flex-1 custom-scrollbar" },
                         React.createElement('div', { className: "grid grid-cols-2 md:grid-cols-4 gap-4" },
-                            React.createElement('div', { className: "bg-slate-50 p-4 rounded-xl border" }, React.createElement('p', { className: "text-slate-400 text-[10px] font-bold uppercase" }, "Pedidos"), React.createElement('p', { className: "text-2xl font-black" }, stats.total)),
-                            React.createElement('div', { className: "bg-green-50 p-4 rounded-xl border-green-100 border" }, React.createElement('p', { className: "text-green-600/70 text-[10px] font-bold uppercase" }, "Executados"), React.createElement('p', { className: "text-2xl font-black text-green-600" }, stats.counts['Executado'])),
-                            React.createElement('div', { className: "bg-blue-50 p-4 rounded-xl border-blue-100 border" }, React.createElement('p', { className: "text-blue-600/70 text-[10px] font-bold uppercase" }, "Pendentes"), React.createElement('p', { className: "text-2xl font-black text-blue-600" }, stats.counts['Aguardando Aprovação'])),
-                            React.createElement('div', { className: "bg-red-50 p-4 rounded-xl border-red-100 border" }, React.createElement('p', { className: "text-red-600/70 text-[10px] font-bold uppercase" }, "Indeferidos"), React.createElement('p', { className: "text-2xl font-black text-red-600" }, stats.counts['Indeferido']))
+                            React.createElement('div', { className: "bg-slate-50 p-4 rounded-xl border text-center" }, React.createElement('p', { className: "text-slate-400 text-[10px] font-bold uppercase" }, "Pedidos"), React.createElement('p', { className: "text-2xl font-black" }, stats.total)),
+                            React.createElement('div', { className: "bg-green-50 p-4 rounded-xl border-green-100 border text-center" }, React.createElement('p', { className: "text-green-600/70 text-[10px] font-bold uppercase" }, "Executados"), React.createElement('p', { className: "text-2xl font-black text-green-600" }, stats.counts['Executado'])),
+                            React.createElement('div', { className: "bg-blue-50 p-4 rounded-xl border-blue-100 border text-center" }, React.createElement('p', { className: "text-blue-600/70 text-[10px] font-bold uppercase" }, "Pendentes"), React.createElement('p', { className: "text-2xl font-black text-blue-600" }, stats.counts['Aguardando Aprovação'])),
+                            React.createElement('div', { className: "bg-red-50 p-4 rounded-xl border-red-100 border text-center" }, React.createElement('p', { className: "text-red-600/70 text-[10px] font-bold uppercase" }, "Indeferidos"), React.createElement('p', { className: "text-2xl font-black text-red-600" }, stats.counts['Indeferido']))
                         ),
                         React.createElement('div', { className: "bg-slate-900 p-6 rounded-2xl text-white" }, 
                             React.createElement('p', { className: "text-slate-400 text-xs font-bold uppercase" }, "Investimento Total na Unidade"), 
@@ -700,15 +853,15 @@
                             React.createElement('div', { className: "bg-white p-6 rounded-2xl border" },
                                 React.createElement('h4', { className: "text-sm font-bold mb-6 flex items-center" }, React.createElement(BarChartIcon, { size: 16, className: "mr-2 text-slate-400" }), "Pedidos por Departamento"),
                                 React.createElement('div', { className: "h-64" }, React.createElement(ResponsiveContainer, {}, React.createElement(PieChart, {}, React.createElement(Pie, { data: stats.deptChartData, dataKey: "value", innerRadius: 0, outerRadius: 80 }, stats.deptChartData.map((_, i) => React.createElement(Cell, { key: i, fill: DEPT_COLORS[i % DEPT_COLORS.length] }))), React.createElement(Tooltip), React.createElement(Legend)))),
-                                React.createElement('div', { className: "mt-4 space-y-2 max-h-32 overflow-y-auto custom-scrollbar" }, stats.deptChartData.map((dept, idx) => React.createElement('div', { key: idx, className: "flex justify-between text-xs font-medium" }, React.createElement('span', null, dept.name), React.createElement('span', null, dept.value))))
+                                React.createElement('div', { className: "mt-4 space-y-2 max-h-32 overflow-y-auto custom-scrollbar" }, stats.deptChartData.map((dept, idx) => React.createElement('div', { key: idx, className: "flex justify-between text-xs font-medium border-b py-1" }, React.createElement('span', null, dept.name), React.createElement('span', null, dept.value))))
                             ),
-                            React.createElement('div', { className: "bg-white p-6 rounded-2xl border flex flex-col items-center" },
+                            React.createElement('div', { className: "bg-white p-6 rounded-2xl border flex flex-col items-center text-center" },
                                 React.createElement('h4', { className: "text-sm font-bold mb-6" }, "Distribuição por Status"),
                                 React.createElement('div', { className: "h-64 w-full" }, React.createElement(ResponsiveContainer, {}, React.createElement(PieChart, {}, React.createElement(Pie, { data: stats.statusChartData, dataKey: "value", innerRadius: 60, outerRadius: 80, paddingAngle: 5, onMouseEnter: (_, i) => setStatusActiveIndex(i), onMouseLeave: () => setStatusActiveIndex(-1) }, stats.statusChartData.map((e, i) => React.createElement(Cell, { key: i, fill: STATUS_OPTIONS.find(s => s.label === e.name)?.hex }))), React.createElement(Tooltip))))
                             )
                         )
                     ),
-                    React.createElement('div', { className: "p-6 border-t bg-slate-50" }, React.createElement('button', { onClick: onClose, className: "w-full py-4 bg-white border rounded-xl font-bold" }, "Fechar Detalhes"))
+                    React.createElement('div', { className: "p-6 border-t bg-slate-50" }, React.createElement('button', { onClick: onClose, className: "w-full py-4 bg-white border rounded-xl font-bold hover:bg-slate-100 transition-colors" }, "Fechar Detalhes"))
                 )
             );
         }
@@ -718,26 +871,21 @@
             const [localSettings, setLocalSettings] = useState(currentSettings);
             useEffect(() => { setLocalSettings(currentSettings) }, [currentSettings]);
             
-            const handleTextareaChange = (key, text) => {
-                const array = text.split('\n').filter(line => line.trim() !== '');
-                setLocalSettings({ ...localSettings, [key]: array });
-            };
-
-            const handleSubmit = (e) => { e.preventDefault(); onSave(localSettings); };
+            const handleTextareaChange = (key, text) => setLocalSettings({ ...localSettings, [key]: text.split('\n').filter(l => l.trim()) });
 
             return React.createElement('div', { className: "max-w-3xl mx-auto space-y-8 animate-in slide-in-from-bottom-4" },
-                React.createElement('h2', { className: "text-2xl font-black text-slate-900" }, "Configurações do Sistema"),
-                React.createElement('form', { onSubmit: handleSubmit, className: "bg-white p-8 rounded-3xl border shadow-sm space-y-6" },
-                    React.createElement('div', { className: "grid grid-cols-1 md:grid-cols-2 gap-6" },
-                        React.createElement('div', { className: "space-y-2" }, React.createElement('label', { className: "text-sm font-bold text-slate-700" }, "Nome da Aplicação"), React.createElement('input', { className: "w-full p-4 border rounded-2xl bg-slate-50", value: localSettings.appName, onChange: e => setLocalSettings({ ...localSettings, appName: e.target.value }) })),
-                        React.createElement('div', { className: "space-y-2" }, React.createElement('label', { className: "text-sm font-bold text-slate-700" }, "Cor Principal"), React.createElement('div', { className: "flex gap-4" }, React.createElement('input', { type: "color", className: "h-14 w-14 rounded-xl border-none", value: localSettings.primaryColor, onChange: e => setLocalSettings({ ...localSettings, primaryColor: e.target.value }) }), React.createElement('div', { className: "flex-1 p-4 bg-slate-100 rounded-xl font-mono text-sm uppercase flex items-center" }, localSettings.primaryColor)))
-                    ),
+                React.createElement('h2', { className: "text-2xl font-black" }, "Configurações"),
+                React.createElement('form', { 
+                    onSubmit: (e) => { e.preventDefault(); onSave(localSettings); },
+                    className: "bg-white p-8 rounded-3xl border shadow-sm space-y-6"
+                },
+                    React.createElement('div', { className: "space-y-2" }, React.createElement('label', { className: "text-sm font-bold" }, "Nome do App"), React.createElement('input', { className: "w-full p-4 border rounded-2xl bg-slate-50", value: localSettings.appName, onChange: e => setLocalSettings({ ...localSettings, appName: e.target.value }) })),
                     React.createElement('div', { className: "grid grid-cols-1 md:grid-cols-3 gap-6" },
                         React.createElement('div', { className: "space-y-2" }, React.createElement('label', { className: "text-sm font-bold" }, "Unidades"), React.createElement('textarea', { rows: 8, className: "w-full p-4 border rounded-2xl bg-slate-50 font-mono text-xs", value: localSettings.units.join('\n'), onChange: e => handleTextareaChange('units', e.target.value) })),
                         React.createElement('div', { className: "space-y-2" }, React.createElement('label', { className: "text-sm font-bold" }, "Departamentos"), React.createElement('textarea', { rows: 8, className: "w-full p-4 border rounded-2xl bg-slate-50 font-mono text-xs", value: (localSettings.departments || []).join('\n'), onChange: e => handleTextareaChange('departments', e.target.value) })),
                         React.createElement('div', { className: "space-y-2" }, React.createElement('label', { className: "text-sm font-bold" }, "Fornecedores"), React.createElement('textarea', { rows: 8, className: "w-full p-4 border rounded-2xl bg-slate-50 font-mono text-xs", value: (localSettings.suppliers || []).join('\n'), onChange: e => handleTextareaChange('suppliers', e.target.value) }))
                     ),
-                    React.createElement('button', { type: "submit", className: "w-full bg-slate-900 text-white py-4 rounded-2xl font-bold flex items-center justify-center gap-2" }, React.createElement(Save, { size: 20 }), "Salvar Alterações Globais")
+                    React.createElement('button', { type: "submit", className: "w-full bg-slate-900 text-white py-4 rounded-2xl font-bold flex items-center justify-center gap-2 transition-transform active:scale-95" }, React.createElement(Save, { size: 20 }), "Salvar Alterações")
                 )
             );
         }
@@ -745,11 +893,10 @@
         function ConfirmationModal({ isOpen, onClose, onConfirm }) {
             if (!isOpen) return null;
             return React.createElement('div', { className: "fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm" },
-                React.createElement('div', { className: "bg-white rounded-3xl p-6 max-w-sm w-full text-center" },
+                React.createElement('div', { className: "bg-white rounded-3xl p-6 max-w-sm w-full text-center shadow-2xl" },
                     React.createElement(AlertTriangle, { className: "text-red-600 mx-auto mb-4", size: 48 }),
                     React.createElement('h3', { className: "text-xl font-bold mb-2" }, "Excluir Registro?"),
-                    React.createElement('p', { className: "text-slate-500 text-sm mb-6" }, "Deseja remover este registo permanentemente?"),
-                    React.createElement('div', { className: "flex gap-3" }, React.createElement('button', { onClick: onClose, className: "flex-1 p-3 bg-slate-100 rounded-xl font-bold" }, "Cancelar"), React.createElement('button', { onClick: onConfirm, className: "flex-1 p-3 bg-red-600 text-white rounded-xl font-bold" }, "Excluir"))
+                    React.createElement('div', { className: "flex gap-3 mt-4" }, React.createElement('button', { onClick: onClose, className: "flex-1 p-3 bg-slate-100 rounded-xl font-bold" }, "Cancelar"), React.createElement('button', { onClick: onConfirm, className: "flex-1 p-3 bg-red-600 text-white rounded-xl font-bold" }, "Excluir"))
                 )
             );
         }
