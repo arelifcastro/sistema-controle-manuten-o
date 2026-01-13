@@ -1,41 +1,229 @@
-<!DOCTYPE html>
-<html lang="pt-pt">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Lista de Presentes - Areli & Jordan</title>
-    
-    <!-- React & Babel -->
-    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
-    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
-    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-    
-    <!-- Tailwind CSS -->
-    <script src="https://cdn.tailwindcss.com"></script>
-    
-    <!-- Google Fonts -->
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;900&family=Pinyon+Script&family=Playfair+Display:wght@400;600;700;900&display=swap" rel="stylesheet">
+import React, { useState, useEffect, useMemo } from 'react';
+import { 
+  LayoutDashboard, 
+  PlusCircle, 
+  List, 
+  TrendingUp, 
+  CheckCircle, 
+  XCircle, 
+  Clock, 
+  Search, 
+  Trash2, 
+  Edit2, 
+  Package, 
+  X 
+} from 'lucide-react';
+import { 
+  BarChart, 
+  Bar, 
+  XAxis, 
+  YAxis, 
+  CartesianGrid, 
+  Tooltip, 
+  ResponsiveContainer, 
+  PieChart, 
+  Pie, 
+  Cell, 
+  Legend 
+} from 'recharts';
 
-    <!-- Firebase SDKs -->
-    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
-    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-auth-compat.js"></script>
-    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore-compat.js"></script>
+// --- IMPORTAÇÕES DO FIREBASE ---
+import { initializeApp } from 'firebase/app';
+import { 
+  getFirestore, 
+  collection, 
+  addDoc, 
+  onSnapshot, 
+  doc, 
+  deleteDoc, 
+  updateDoc 
+} from 'firebase/firestore';
+import { 
+  getAuth, 
+  signInAnonymously, 
+  onAuthStateChanged 
+} from 'firebase/auth';
 
-    <style>
-        body { font-family: 'Inter', sans-serif; }
-        .font-serif { font-family: 'Playfair Display', serif; }
-        .font-script { font-family: 'Pinyon Script', cursive; }
-    </style>
-</head>
-<body class="bg-[#f4f5f0] text-[#2f3b1c]">
-    <div id="root"></div>
+// --- SUA CONFIGURAÇÃO REAL ---
+const firebaseConfig = {
+  apiKey: "AIzaSyC2sCd7LLsDIgtsyKWrz2aaHmBojglK7pg",
+  authDomain: "controle-de-manutencoes-49274.firebaseapp.com",
+  projectId: "controle-de-manutencoes-49274",
+  storageBucket: "controle-de-manutencoes-49274.firebasestorage.app",
+  messagingSenderId: "32715522228",
+  appId: "1:32715522228:web:65637da97de422c2f497e1",
+  measurementId: "G-T6TS6Y6NT5"
+};
 
-    <script type="text/babel">
-        // TODO: Código React completo conforme enviado pelo usuário
-        // O conteúdo foi mantido conforme fornecido.
-        ...
-    </script>
-</body>
-</html>
+const app = initializeApp(firebaseConfig);
+const auth = getAuth(app);
+const db = getFirestore(app);
+const appId = "producao-oficial";
+
+const UNIDADES = [
+  "Alphaville", "Anchieta", "Araçatuba", "Araraquara", "Assis", "Bacelar", "Bauru", "Brasília", 
+  "Campinas", "Cancioneiro", "Cid. Universitária", "Goiânia Flamboyant", "Jundiaí", "Limeira", 
+  "Manaus", "Marques S. Vicente", "Norte", "Paraíso", "Paulista", "Paz", "Paz / Henri Dunant", 
+  "Pinheiros", "Ribeirão Preto", "Santos", "São José do Rio Pardo", "São José dos Campos", 
+  "Sorocaba", "Taquari", "Tatuapé", "Vergueiro", "São José do Rio Preto"
+];
+
+const STATUS_OPTIONS = [
+  { value: 'Executado', label: 'Executado', color: 'bg-green-100 text-green-700 border-green-200' },
+  { value: 'Indeferido', label: 'Indeferido', color: 'bg-red-100 text-red-700 border-red-200' },
+  { value: 'Aguardando Aprovação', label: 'Aguardando Aprovação', color: 'bg-blue-100 text-blue-700 border-blue-200' }
+];
+
+const COLORS = ['#3b82f6', '#10b981', '#ef4444', '#f59e0b', '#8b5cf6'];
+
+export default function App() {
+  const [user, setUser] = useState(null);
+  const [activeTab, setActiveTab] = useState('dashboard');
+  const [maintenances, setMaintenances] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [editingItem, setEditingItem] = useState(null);
+  const [filters, setFilters] = useState({ search: '', unit: '', status: '' });
+
+  useEffect(() => {
+    signInAnonymously(auth).catch(err => console.error("Auth Error:", err));
+    const unsubscribe = onAuthStateChanged(auth, setUser);
+    return () => unsubscribe();
+  }, []);
+
+  useEffect(() => {
+    if (!user) return;
+    const q = collection(db, 'artifacts', appId, 'public', 'data', 'maintenances');
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      setMaintenances(data);
+      setLoading(false);
+    }, (error) => {
+      console.error("Firestore Error:", error);
+      setLoading(false);
+    });
+    return () => unsubscribe();
+  }, [user]);
+
+  const filteredData = useMemo(() => {
+    return maintenances.filter(m => {
+      const matchSearch = !filters.search || 
+        m.department?.toLowerCase().includes(filters.search.toLowerCase()) ||
+        m.orderNumber?.includes(filters.search);
+      const matchUnit = !filters.unit || m.unit === filters.unit;
+      const matchStatus = !filters.status || m.status === filters.status;
+      return matchSearch && matchUnit && matchStatus;
+    });
+  }, [maintenances, filters]);
+
+  const stats = useMemo(() => {
+    const totalValue = filteredData.reduce((acc, curr) => acc + Number(curr.value || 0), 0);
+    const countByStatus = filteredData.reduce((acc, curr) => {
+      acc[curr.status] = (acc[curr.status] || 0) + 1;
+      return acc;
+    }, {});
+    const chartDataStatus = Object.entries(countByStatus).map(([name, value]) => ({ name, value }));
+    return { totalValue, count: filteredData.length, chartDataStatus };
+  }, [filteredData]);
+
+  const handleSave = async (data) => {
+    try {
+      if (editingItem) {
+        const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'maintenances', editingItem.id);
+        await updateDoc(docRef, { ...data, updatedAt: new Date().toISOString() });
+        setEditingItem(null);
+      } else {
+        await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'maintenances'), {
+          ...data, createdAt: new Date().toISOString()
+        });
+      }
+      setActiveTab('list');
+    } catch (err) { alert("Erro ao salvar! Verifique as regras do banco."); }
+  };
+
+  const handleDelete = async (id) => {
+    if (window.confirm("Deseja excluir este registro?")) {
+      await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'maintenances', id));
+    }
+  };
+
+  return (
+    <div className="min-h-screen bg-slate-50 flex flex-col md:flex-row text-slate-800 font-sans">
+      <nav className="w-full md:w-64 bg-slate-900 text-white p-6 space-y-4 shadow-xl">
+        <div className="flex items-center space-x-2 mb-10">
+          <div className="bg-blue-600 p-2 rounded-lg"><LayoutDashboard size={20} /></div>
+          <span className="font-bold text-xl tracking-tight">ChairControl</span>
+        </div>
+        <button onClick={() => {setActiveTab('dashboard'); setEditingItem(null)}} className={`w-full flex items-center p-3 rounded-xl transition-all ${activeTab === 'dashboard' ? 'bg-blue-600 shadow-lg shadow-blue-900/20' : 'hover:bg-slate-800 text-slate-400'}`}><TrendingUp className="mr-3" size={18}/> Painel</button>
+        <button onClick={() => {setActiveTab('form'); setEditingItem(null)}} className={`w-full flex items-center p-3 rounded-xl transition-all ${activeTab === 'form' ? 'bg-blue-600 shadow-lg shadow-blue-900/20' : 'hover:bg-slate-800 text-slate-400'}`}><PlusCircle className="mr-3" size={18}/> Novo Registo</button>
+        <button onClick={() => setActiveTab('list')} className={`w-full flex items-center p-3 rounded-xl transition-all ${activeTab === 'list' ? 'bg-blue-600 shadow-lg shadow-blue-900/20' : 'hover:bg-slate-800 text-slate-400'}`}><List className="mr-3" size={18}/> Listagem</button>
+      </nav>
+
+      <main className="flex-1 p-6 md:p-10 overflow-y-auto">
+        {loading ? (
+          <div className="flex flex-col justify-center items-center h-full space-y-4"><div className="animate-spin rounded-full h-10 w-10 border-b-2 border-blue-600"></div><p className="text-slate-500 font-medium">Carregando...</p></div>
+        ) : (
+          <div className="max-w-6xl mx-auto">
+            {activeTab === 'dashboard' && (
+              <div className="space-y-8 animate-in fade-in duration-500">
+                <h2 className="text-2xl font-bold text-slate-900">Resumo de Manutenções</h2>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                  <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm hover:shadow-md transition-shadow"><p className="text-slate-500 text-sm font-semibold uppercase">Registos Totais</p><p className="text-4xl font-black mt-2">{stats.count}</p></div>
+                  <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm border-l-4 border-l-emerald-500 hover:shadow-md transition-shadow"><p className="text-slate-500 text-sm font-semibold uppercase">Investimento Total</p><p className="text-4xl font-black mt-2 text-emerald-600">R$ {stats.totalValue.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</p></div>
+                  <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm hover:shadow-md transition-shadow"><p className="text-slate-500 text-sm font-semibold uppercase">Status</p><div className="h-40 mt-2"><ResponsiveContainer><PieChart><Pie data={stats.chartDataStatus} dataKey="value" innerRadius={45} outerRadius={60} paddingAngle={5}>{stats.chartDataStatus.map((e, i) => <Cell key={i} fill={COLORS[i % COLORS.length]} />)}</Pie><Tooltip /></PieChart></ResponsiveContainer></div></div>
+                </div>
+              </div>
+            )}
+
+            {activeTab === 'form' && <MaintenanceForm onSubmit={handleSave} initialData={editingItem} onCancel={() => setActiveTab('list')} />}
+
+            {activeTab === 'list' && (
+              <div className="space-y-6 animate-in fade-in duration-500">
+                <div className="flex flex-col md:flex-row gap-4">
+                  <div className="relative flex-1"><Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} /><input placeholder="Procurar pedido..." className="w-full pl-10 pr-4 py-3 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500 bg-white" onChange={e => setFilters({...filters, search: e.target.value})} /></div>
+                  <select className="p-3 border border-slate-200 rounded-xl bg-white min-w-[200px]" onChange={e => setFilters({...filters, unit: e.target.value})}><option value="">Todas as Unidades</option>{UNIDADES.map(u => <option key={u} value={u}>{u}</option>)}</select>
+                </div>
+                <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+                  <table className="w-full text-left">
+                    <thead className="bg-slate-50 border-b"><tr><th className="p-5 text-xs font-bold uppercase text-slate-500">Unidade</th><th className="p-5 text-xs font-bold uppercase text-slate-500">Nº Pedido</th><th className="p-5 text-xs font-bold uppercase text-slate-500 text-right">Valor</th><th className="p-5 text-xs font-bold uppercase text-slate-500">Status</th><th className="p-5 text-xs font-bold uppercase text-slate-500 text-center">Ações</th></tr></thead>
+                    <tbody className="divide-y">{filteredData.map(item => (
+                      <tr key={item.id} className="hover:bg-slate-50/50 transition-colors group">
+                        <td className="p-5"><p className="font-bold text-slate-900">{item.unit}</p><p className="text-xs text-slate-500">{item.department || 'Geral'}</p></td>
+                        <td className="p-5 font-mono text-sm">#{item.orderNumber}</td>
+                        <td className="p-5 text-right font-bold text-blue-600">R$ {Number(item.value).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</td>
+                        <td className="p-5"><span className={`px-3 py-1 rounded-full text-[10px] font-black uppercase border ${STATUS_OPTIONS.find(s => s.value === item.status)?.color}`}>{item.status}</span></td>
+                        <td className="p-5 text-center flex justify-center space-x-2"><button onClick={() => {setEditingItem(item); setActiveTab('form')}} className="p-2 text-slate-400 hover:text-blue-600"><Edit2 size={16}/></button><button onClick={() => handleDelete(item.id)} className="p-2 text-slate-400 hover:text-red-600"><Trash2 size={16}/></button></td>
+                      </tr>
+                    ))}</tbody>
+                  </table>
+                  {filteredData.length === 0 && <div className="p-20 text-center text-slate-400">Vazio.</div>}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+      </main>
+    </div>
+  );
+}
+
+function MaintenanceForm({ onSubmit, initialData, onCancel }) {
+  const [formData, setFormData] = useState({ unit: '', department: '', orderNumber: '', value: '', status: 'Aguardando Aprovação' });
+  useEffect(() => { if (initialData) setFormData(initialData); }, [initialData]);
+  const handleSubmit = (e) => { e.preventDefault(); if (!formData.unit || !formData.orderNumber) return alert("Preencha os campos obrigatórios."); onSubmit(formData); };
+
+  return (
+    <div className="max-w-2xl mx-auto bg-white p-10 rounded-3xl border border-slate-200 shadow-2xl animate-in slide-in-from-bottom-4 duration-500">
+      <div className="flex items-center justify-between mb-8"><h2 className="text-2xl font-black text-slate-900">{initialData ? 'Editar Registo' : 'Novo Registo'}</h2><button onClick={onCancel} className="text-slate-400"><X /></button></div>
+      <form onSubmit={handleSubmit} className="space-y-6">
+        <div className="space-y-2"><label className="text-sm font-bold text-slate-700">Unidade</label><select className="w-full p-4 border border-slate-200 rounded-2xl bg-slate-50 outline-none focus:ring-2 focus:ring-blue-500" value={formData.unit} onChange={e => setFormData({...formData, unit: e.target.value})}><option value="">Selecione...</option>{UNIDADES.map(u => <option key={u} value={u}>{u}</option>)}</select></div>
+        <div className="space-y-2"><label className="text-sm font-bold text-slate-700">Departamento</label><input placeholder="Ex: Secretaria" className="w-full p-4 border border-slate-200 rounded-2xl bg-slate-50 outline-none focus:ring-2 focus:ring-blue-500" value={formData.department} onChange={e => setFormData({...formData, department: e.target.value})} /></div>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          <div className="space-y-2"><label className="text-sm font-bold text-slate-700">Nº Pedido (6 dígitos)</label><input maxLength={6} placeholder="000000" className="w-full p-4 border border-slate-200 rounded-2xl font-mono bg-slate-50 outline-none focus:ring-2 focus:ring-blue-500" value={formData.orderNumber} onChange={e => setFormData({...formData, orderNumber: e.target.value.replace(/\D/g, '')})} /></div>
+          <div className="space-y-2"><label className="text-sm font-bold text-slate-700">Valor (R$)</label><input type="number" step="0.01" placeholder="0,00" className="w-full p-4 border border-slate-200 rounded-2xl bg-slate-50 outline-none focus:ring-2 focus:ring-blue-500" value={formData.value} onChange={e => setFormData({...formData, value: e.target.value})} /></div>
+        </div>
+        <div className="space-y-3"><label className="text-sm font-bold text-slate-700">Status</label><div className="flex flex-wrap gap-2">{STATUS_OPTIONS.map(s => (<button key={s.value} type="button" onClick={() => setFormData({...formData, status: s.value})} className={`flex-1 px-4 py-3 rounded-xl border text-[10px] font-black uppercase tracking-tighter transition-all ${formData.status === s.value ? s.color + ' ring-4 ring-blue-500/10 border-blue-500' : 'bg-white text-slate-400 border-slate-100 hover:border-slate-300'}`}>{s.label}</button>))}</div></div>
+        <div className="flex flex-col md:flex-row gap-4 pt-6 border-t mt-10"><button type="submit" className="flex-1 bg-blue-600 text-white py-4 rounded-2xl font-bold hover:bg-blue-700 shadow-xl shadow-blue-500/20 transition-all">{initialData ? 'Atualizar' : 'Gravar'}</button><button type="button" onClick={onCancel} className="px-8 py-4 text-slate-500 font-bold hover:bg-slate-50 rounded-2xl">Cancelar</button></div>
+      </form>
+    </div>
+  );
+}
