@@ -139,7 +139,7 @@
                 return date.getMonth() === referenceDate.getMonth() && date.getFullYear() === referenceDate.getFullYear();
             }
             if (period === 'year') {
-                return date.getFullYear() === now.getFullYear();
+                return date.getFullYear() === referenceDate.getFullYear();
             }
             return true;
         };
@@ -393,7 +393,6 @@
 
             const handleSaveMaintenance = async (data) => {
                 try {
-                    // 1. Definir os dados do registo (garantir projectId contextual)
                     const pid = activeProjectId !== 'all' ? activeProjectId : 'none';
                     const docData = { 
                         ...data, 
@@ -401,7 +400,6 @@
                         value: Number(data.value) || 0 
                     };
 
-                    // 2. Salvar Registo de Manutenção
                     if (editingItem) {
                         const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'maintenances', editingItem.id);
                         await updateDoc(docRef, { ...docData, updatedAt: new Date().toISOString() });
@@ -413,7 +411,6 @@
                         });
                     }
 
-                    // 3. Atualizar configurações (Metadados como Depto/Fornecedor)
                     const docSettings = doc(db, 'artifacts', appId, 'public', 'data', 'settings', 'global');
                     const updates = {};
                     
@@ -425,7 +422,6 @@
                     }
 
                     if (Object.keys(updates).length > 0) {
-                        // Tentar atualizar, se falhar (documento não existe), criar novo
                         await updateDoc(docSettings, updates).catch(() => {
                             return setDoc(docSettings, {
                                 appName: settings.appName,
@@ -481,8 +477,11 @@
             const primaryColorStyle = { backgroundColor: settings.primaryColor };
             const projectsColor = "#f59e0b"; // Ambar
 
-            const TimeFilterButtons = ({ value, onChange, currentSelectedDate, onDateChange }) => (
-                React.createElement('div', { className: "flex flex-col sm:flex-row items-end sm:items-center gap-2" },
+            // Componente de Filtro de Tempo Melhorado
+            const TimeFilterButtons = ({ value, onChange, currentSelectedDate, onDateChange }) => {
+                const years = Array.from({ length: 5 }, (_, i) => new Date().getFullYear() - i);
+                
+                return React.createElement('div', { className: "flex flex-col sm:flex-row items-end sm:items-center gap-2" },
                     React.createElement('div', { className: "flex bg-slate-200 p-1 rounded-xl" },
                         ['all', 'day', 'week', 'month', 'year'].map(p => {
                             const labels = { all: 'Todos', day: 'Hoje', week: '7 Dias', month: 'Mês', year: 'Ano' };
@@ -492,9 +491,29 @@
                                 className: `px-3 py-1.5 text-xs font-bold rounded-lg transition-all ${isActive ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`,
                             }, labels[p]);
                         })
+                    ),
+                    (value === 'month' || value === 'year') && React.createElement('div', { className: "flex gap-2 animate-in fade-in slide-in-from-right-2" },
+                        value === 'month' && React.createElement('select', { 
+                            className: "px-3 py-1.5 text-xs font-bold text-slate-700 bg-white border border-slate-200 rounded-xl outline-none shadow-sm cursor-pointer",
+                            value: currentSelectedDate.getMonth(),
+                            onChange: (e) => { 
+                                const newDate = new Date(currentSelectedDate); 
+                                newDate.setMonth(parseInt(e.target.value)); 
+                                onDateChange(newDate); 
+                            }
+                        }, MONTHS.map((m, i) => React.createElement('option', { key: i, value: i }, m))),
+                        React.createElement('select', { 
+                            className: "px-3 py-1.5 text-xs font-bold text-slate-700 bg-white border border-slate-200 rounded-xl outline-none shadow-sm cursor-pointer",
+                            value: currentSelectedDate.getFullYear(),
+                            onChange: (e) => { 
+                                const newDate = new Date(currentSelectedDate); 
+                                newDate.setFullYear(parseInt(e.target.value)); 
+                                onDateChange(newDate); 
+                            }
+                        }, years.map(y => React.createElement('option', { key: y, value: y }, y)))
                     )
-                )
-            );
+                );
+            };
 
             if (!isAuthenticated) return React.createElement(LoginScreen, { onLogin: (role) => { setIsAuthenticated(true); setCurrentUserRole(role); }, onRequestAccess: handleRequestAccess, accessStatus: accessRequestStatus });
 
@@ -536,7 +555,6 @@
                     ),
                     
                     React.createElement('div', { className: "space-y-2 flex-1" },
-                        // Aba de Projetos (Destaque Ambar)
                         React.createElement('div', { className: "space-y-1" },
                             React.createElement('button', { 
                                 onClick: () => { setActiveTab('projects'); setEditingItem(null); },
@@ -544,7 +562,6 @@
                                 style: activeTab === 'projects' ? { backgroundColor: projectsColor } : {}
                             }, React.createElement(FolderKanban, { className: "mr-3", size: 18 }), "Projetos"),
                             
-                            // Nome do Projeto Ativo embaixo da aba Projetos (Design Ajustado)
                             activeProjectId !== 'all' && React.createElement('div', { className: "px-3 py-2 mx-2 mt-1 bg-amber-900/20 rounded-lg border-l-4 border-amber-500 animate-in slide-in-from-top-1" },
                                 React.createElement('p', { className: "text-[9px] uppercase font-black text-amber-500 tracking-wider" }, "Contexto Ativo:"),
                                 React.createElement('div', { className: "flex items-center justify-between mt-0.5" },
@@ -592,7 +609,12 @@
                                     React.createElement('h2', { className: "text-2xl font-bold text-slate-900" }, activeProjectId === 'all' ? "Painel Geral" : `Painel: ${projects.find(p => p.id === activeProjectId)?.name}`),
                                     activeProjectId !== 'all' && React.createElement('p', { className: "text-sm text-slate-500" }, "Visualizando dados específicos deste projeto")
                                 ),
-                                React.createElement(TimeFilterButtons, { value: dashboardPeriod, onChange: setDashboardPeriod, currentSelectedDate: selectedFilterDate, onDateChange: setSelectedFilterDate })
+                                React.createElement(TimeFilterButtons, { 
+                                    value: dashboardPeriod, 
+                                    onChange: setDashboardPeriod, 
+                                    currentSelectedDate: selectedFilterDate, 
+                                    onDateChange: setSelectedFilterDate 
+                                })
                             ),
 
                             React.createElement('div', { className: "grid grid-cols-1 md:grid-cols-3 gap-6" },
@@ -611,7 +633,12 @@
                             React.createElement('div', { className: "bg-white p-8 rounded-3xl border shadow-sm flex flex-col md:flex-row items-center gap-6" },
                                 React.createElement('div', { className: "flex-1" }, React.createElement('h3', { className: "font-bold text-lg flex items-center gap-2" }, React.createElement(FileSpreadsheet, { className: "text-green-600" }), "Exportar Relatório"), React.createElement('p', { className: "text-slate-400 text-sm" }, "Gere um arquivo CSV organizado com os dados filtrados.")),
                                 React.createElement('div', { className: "flex flex-col sm:flex-row gap-3 items-center" },
-                                    React.createElement(TimeFilterButtons, { value: exportPeriod, onChange: setExportPeriod, currentSelectedDate: exportDate, onDateChange: setExportDate }),
+                                    React.createElement(TimeFilterButtons, { 
+                                        value: exportPeriod, 
+                                        onChange: setExportPeriod, 
+                                        currentSelectedDate: exportDate, 
+                                        onDateChange: setExportDate 
+                                    }),
                                     React.createElement('button', { onClick: () => {
                                         const data = maintenances.filter(m => isWithinPeriod(m.createdAt, exportPeriod, exportDate));
                                         if(data.length > 0) exportToCSV(data, "Relatorio_ChairControl");
@@ -654,7 +681,12 @@
                                     React.createElement('h2', { className: "text-xl font-bold text-slate-900" }, "Listagem de Pedidos"),
                                     React.createElement('div', { className: "flex gap-2" },
                                         React.createElement('button', { onClick: () => setShowClearAllModal(true), className: "px-4 py-2 bg-red-100 text-red-600 rounded-xl text-xs font-bold hover:bg-red-200 flex items-center gap-2" }, React.createElement(RefreshCw, { size: 14 }), "Limpar Tudo"),
-                                        React.createElement(TimeFilterButtons, { value: listPeriod, onChange: setListPeriod, currentSelectedDate: selectedFilterDate, onDateChange: setSelectedFilterDate })
+                                        React.createElement(TimeFilterButtons, { 
+                                            value: listPeriod, 
+                                            onChange: setListPeriod, 
+                                            currentSelectedDate: selectedFilterDate, 
+                                            onDateChange: setSelectedFilterDate 
+                                        })
                                     )
                                 ),
                                 React.createElement('div', { className: "flex flex-col md:flex-row gap-4" },
@@ -753,7 +785,7 @@
             );
         }
 
-        // --- FORMULÁRIO (Opções de Status Reintroduzidas) ---
+        // --- FORMULÁRIO ---
         function MaintenanceForm({ onSubmit, initialData, onCancel, units, existingDepartments, existingSuppliers, primaryColor }) {
             const initialFormState = { unit: '', department: '', supplier: '', orderNumber: '', value: '', status: 'Aguardando Aprovação' };
             const [formData, setFormData] = useState(initialFormState);
@@ -796,7 +828,6 @@
                         React.createElement('div', { className: "space-y-2" }, React.createElement('label', { className: "text-sm font-bold" }, "Valor (R$)"), React.createElement('input', { required: true, type: "number", step: "0.01", className: "w-full p-4 border rounded-2xl", value: formData.value, onChange: e => setFormData({ ...formData, value: e.target.value }) }))
                     ),
                     
-                    // STATUS RESTAURADO
                     React.createElement('div', { className: "space-y-3" }, 
                         React.createElement('label', { className: "text-sm font-bold" }, "Status"), 
                         React.createElement('div', { className: "flex flex-wrap gap-2" }, STATUS_OPTIONS.map(s => React.createElement('button', { key: s.value, type: "button", onClick: () => setFormData({ ...formData, status: s.value }), className: `flex-1 py-3 rounded-xl border text-[10px] font-black uppercase transition-all ${formData.status === s.value ? s.color + ' ring-4 ring-offset-2 ring-slate-200 border-blue-500' : 'bg-white text-slate-400 border-slate-100 hover:border-slate-300'}` }, s.label)))
